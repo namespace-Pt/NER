@@ -32,4 +32,4 @@ $$\begin{aligned}
 &= \log(\sum_{y[0:n-1]\in Y[0:n-1]}\exp(\log(\sum_{y_n\in \mathcal{Y}}\exp(s(X,y,n-1))) + \mathrm{Score}(X[n],y[n]))
 \end{aligned}$$
   - the equation reveals the **Optimal Substructure** of computing the score of every possible tag sequence
-  - therefore, we can use dynamic programming to calculate $\sum_{\tilde{y}\in Y}\exp(\mathrm{Score}(X,\tilde{y}))$ by computing the **log-exp-sum** of the prefix string.
+  - therefore, we can use dynamic programming to calculate $\sum_{\tilde{y}\in Y}\exp(\mathrm{Score}(X,\tilde{y}))$ by iteratively computing the **log-exp-sum** of the prefix string.
