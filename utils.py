@@ -72,8 +72,8 @@ class Data(Dataset):
                 
                 # append the extra labels
                 label.append('O')
-                label.insert(0,'<START>')
-                label.append('<END>')
+                # label.insert(0,'<START>')
+                # label.append('<END>')
 
                 sentences.append(sentence)
                 labels.append(label)
@@ -114,7 +114,7 @@ class Data(Dataset):
         
         sentence = sentence + [0] * (self.max_length - len(sentence))
         # <START> and <END> are extra labels
-        label = label + [-1] * (self.max_length - len(label) + 2)
+        label = label + [self.tag2idx['<PAD>']] * (self.max_length - len(label))
 
         back_dict['sentence'] = np.asarray(sentence)
         back_dict['label'] = np.asarray(label)

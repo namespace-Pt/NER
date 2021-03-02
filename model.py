@@ -18,6 +18,8 @@ class BiLSTM_CRF(nn.Module):
         self.vocab_size = hparams['vocab_size']
         self.seq_length = hparams['seq_length']
 
+        self.device = hparams['device']
+
         self.tag2idx = tag2idx
         self.tagset_size = len(tag2idx)
 
@@ -42,8 +44,8 @@ class BiLSTM_CRF(nn.Module):
         self.hidden = self.init_hidden()
 
     def init_hidden(self):
-        return (torch.randn(2, self.batch_size, self.hidden_dim // 2),
-                torch.randn(2, self.batch_size, self.hidden_dim // 2))
+        return (torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device),
+                torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device))
 
     def _lstm_encoder(self, sentence):
         """ encode sentence with BiLSTM
@@ -71,7 +73,7 @@ class BiLSTM_CRF(nn.Module):
             alpha: batch of log-sum-exp of [batch_size, 1]
         """
 
-        init_alphas = torch.full((self.batch_size, 1, self.tagset_size), -10000.)
+        init_alphas = torch.full((self.batch_size, 1, self.tagset_size), -10000.).to(self.device)
         # START_TAG has all of the score.
         init_alphas[:, 0, self.tag2idx[START_TAG]] = 0.
         forward_var = init_alphas
@@ -100,7 +102,7 @@ class BiLSTM_CRF(nn.Module):
         """
         backpointers = []
 
-        init_vvars = torch.full((self.batch_size, 1, self.tagset_size), -10000.)
+        init_vvars = torch.full((self.batch_size, 1, self.tagset_size), -10000.).to(self.device)
         init_vvars[:, 0, self.tag2idx[START_TAG]] = 0.
 
         forward_var = init_vvars
@@ -138,19 +140,26 @@ class BiLSTM_CRF(nn.Module):
         Returns:
             scores: batch of scores, size of [batch_size, 1]
         """
-        score = torch.zeros((self.batch_size,1))
-        tags = torch.cat([torch.full((self.batch_size, 1), self.tag2idx[START_TAG], dtype=torch.long), tags],dim=1)
+        score = torch.zeros((self.batch_size,1), device=self.device)
+        tags = torch.cat([torch.full((self.batch_size, 1), self.tag2idx[START_TAG], dtype=torch.long, device=self.device), tags],dim=1)
         for i in range(feats.shape[0]):
             feat = feats[:,i,:]
             # calculate score in batch
+            # try:
             score = score + self.transitions[tags[:,i+1], tags[:,i]].view(self.batch_size,1) + feat.gather(dim=-1, index=tags[:,i].unsqueeze(dim=-1))
+            # except:
+            #     print(i, tags[:,i], feat)
+            #     print(tags[:,i].shape, feat.shape)
         score = score + self.transitions[self.tag2idx[STOP_TAG], tags[:,-1]].unsqueeze(dim=-1)
 
         return score
 
     def neg_log_likelihood(self, x):
-        sentence = x['sentence'].long()
-        tags = x['label'].long()
+        sentence = x['sentence'].long().to(self.device)
+        tags = x['label'].long().to(self.device)
+
+        if sentence.shape[0] != self.batch_size:
+            self.batch_size = sentence.shape[0]
 
         feats = self._lstm_encoder(sentence)
         forward_score = self._forward_alg(feats)
@@ -158,7 +167,11 @@ class BiLSTM_CRF(nn.Module):
         return torch.sum(forward_score - gold_score, dim=0)
 
     def forward(self, x):
-        sentence = x['sentence'].long()
+        sentence = x['sentence'].long().to(self.device)
+
+        if sentence.shape[0] != self.batch_size:
+            self.batch_size = sentence.shape[0]
+
         lstm_feats = self._lstm_encoder(sentence)
         score, tag_seq = self._viterbi_decode(lstm_feats)
         return score, tag_seq
