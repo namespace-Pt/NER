@@ -5,3 +5,5 @@
 *.log
 *.aux
 main.ipynb
+__pycache__
+.vscode

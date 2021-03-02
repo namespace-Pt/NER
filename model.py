@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 START_TAG = '<START>'
-STOP_TAG = '<STOP>'
+STOP_TAG = '<END>'
+PAD_TAG = '<PAD>'
 
 class BiLSTM_CRF(nn.Module):
     '''
@@ -15,6 +16,8 @@ class BiLSTM_CRF(nn.Module):
         self.embedding_dim = hparams['embedding_dim']
         self.hidden_dim = hparams['hidden_dim']
         self.vocab_size = hparams['vocab_size']
+        self.seq_length = hparams['seq_length']
+
         self.tag2idx = tag2idx
         self.tagset_size = len(tag2idx)
 
@@ -33,6 +36,9 @@ class BiLSTM_CRF(nn.Module):
         self.transitions.data[tag2idx[START_TAG], :] = -10000
         self.transitions.data[:, tag2idx[STOP_TAG]] = -10000
 
+        self.transitions.data[:, tag2idx[PAD_TAG]] = 0
+        self.transitions.data[tag2idx[PAD_TAG], :] = 0
+
         self.hidden = self.init_hidden()
 
     def init_hidden(self):
@@ -49,9 +55,9 @@ class BiLSTM_CRF(nn.Module):
             lstm_feats: sentence embedding of [batch_size, seq_length, tagset_size]
         """
         self.hidden = self.init_hidden()
-        embedding = self.embedding(sentence).view(len(sentence), self.batch_size, self.embedding_dim)
+        embedding = self.embedding(sentence).view(self.seq_length, self.batch_size, self.embedding_dim)
         lstm_out, self.hidden = self.lstm(embedding, self.hidden)
-        lstm_out = lstm_out.view(len(sentence), self.batch_size, self.hidden_dim).transpose(0,1)
+        lstm_out = lstm_out.view(self.seq_length, self.batch_size, self.hidden_dim).transpose(0,1)
         lstm_feats = self.hidden2tag(lstm_out)
         return lstm_feats
 
@@ -138,17 +144,21 @@ class BiLSTM_CRF(nn.Module):
             feat = feats[:,i,:]
             # calculate score in batch
             score = score + self.transitions[tags[:,i+1], tags[:,i]].view(self.batch_size,1) + feat.gather(dim=-1, index=tags[:,i].unsqueeze(dim=-1))
+        score = score + self.transitions[self.tag2idx[STOP_TAG], tags[:,-1]].unsqueeze(dim=-1)
 
-        score = score + self.transitions[self.tag2idx[STOP_TAG], tags[:,-1]]
         return score
 
-    def neg_log_likelihood(self, sentence, tags):
+    def neg_log_likelihood(self, x):
+        sentence = x['sentence'].long()
+        tags = x['label'].long()
+
         feats = self._lstm_encoder(sentence)
         forward_score = self._forward_alg(feats)
         gold_score = self._score_sentence(feats, tags)
-        return forward_score - gold_score
+        return torch.sum(forward_score - gold_score, dim=0)
 
-    def forward(self, sentence):
+    def forward(self, x):
+        sentence = x['sentence'].long()
         lstm_feats = self._lstm_encoder(sentence)
         score, tag_seq = self._viterbi_decode(lstm_feats)
         return score, tag_seq
