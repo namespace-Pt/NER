@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+from transformers import BertForTokenClassification
+
 START_TAG = '<START>'
 STOP_TAG = '<END>'
 PAD_TAG = '<PAD>'
 
-class BiLSTM_CRF(nn.Module):
+class BiLSTM_CRF_BERT(nn.Module):
     '''
         BiLSTM with CRF for Named Entity Recognition
     '''
@@ -24,8 +26,13 @@ class BiLSTM_CRF(nn.Module):
         self.tagset_size = len(tag2idx)
         self.idx2tag = {v:k for k,v in tag2idx.items()}
 
-        self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
         self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, bidirectional=True)
+
+        self.bert = BertForTokenClassification.from_pretrained(
+            'bert-base-chinese',
+            # output hidden embedding of each transformer layer
+            output_hidden_states=True
+        )
 
         # Maps the output of the LSTM into tag space.
         self.hidden2tag = nn.Linear(self.hidden_dim, self.tagset_size)
@@ -48,7 +55,7 @@ class BiLSTM_CRF(nn.Module):
         return (torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device),
                 torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device))
 
-    def _lstm_encoder(self, sentence):
+    def _lstm_encoder(self, sentence, attn_mask):
         """ encode sentence with BiLSTM
 
         Args:
@@ -58,7 +65,11 @@ class BiLSTM_CRF(nn.Module):
             lstm_feats: sentence embedding of [batch_size, seq_length, tagset_size]
         """
         self.hidden = self.init_hidden()
-        embedding = self.embedding(sentence).transpose(0,1)
+
+        output = self.bert(sentence, attn_mask)
+        # not sure
+        embedding = output['hidden_states'][-2].transpose(0,1)
+
         lstm_out, self.hidden = self.lstm(embedding, self.hidden)
         lstm_out = lstm_out.view(self.seq_length, self.batch_size, self.hidden_dim).transpose(0,1)
         lstm_feats = self.hidden2tag(lstm_out)
@@ -113,13 +124,14 @@ class BiLSTM_CRF(nn.Module):
         return score
 
     def neg_log_likelihood(self, x):
-        sentence = x['token'].long().to(self.device)
-        tags = x['label'].long().to(self.device)
+        sentence = x['token'].to(self.device)
+        tags = x['label'].to(self.device)
+        attn_mask = x['attn_mask'].to(self.device)
 
         if sentence.shape[0] != self.batch_size:
             self.batch_size = sentence.shape[0]
 
-        feats = self._lstm_encoder(sentence)
+        feats = self._lstm_encoder(sentence, attn_mask)
         forward_score = self._forward_alg(feats)
         gold_score = self._score_sentence(feats, tags)
         return torch.mean(forward_score - gold_score, dim=0)
@@ -167,12 +179,13 @@ class BiLSTM_CRF(nn.Module):
         
         return path_score, best_path
     
-    def forward(self, sentence):
-        sentence = sentence.long().to(self.device)
+    def forward(self, sentence, attn_mask):
+        sentence = sentence.to(self.device)
+        attn_mask = attn_mask.to(self.device)
 
         if sentence.shape[0] != self.batch_size:
             self.batch_size = sentence.shape[0]
 
-        lstm_feats = self._lstm_encoder(sentence)
+        lstm_feats = self._lstm_encoder(sentence, attn_mask)
         score, tag_seq = self._viterbi_decode(lstm_feats)
         return score, tag_seq

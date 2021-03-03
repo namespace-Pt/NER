@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from collections import defaultdict
 from torch.utils.data import Dataset,DataLoader
+from transformers import BertTokenizer
 
 class Data(Dataset):
     """
@@ -42,11 +43,14 @@ class Data(Dataset):
                 tag2idx[item] = len(tag2idx)
 
         self.tag2idx = tag2idx
-
-        self.path = 'D:/Data/NER/corpus/labeled_train.txt'
-        # self.path = hparams['path']
+        self.path = hparams['path']
 
         self._parse_file()
+
+        self.bert = False
+        if 'bert' in hparams:
+            self.bert = True
+            self.tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
 
     def _parse_file(self):
         """ parse the labeled training file to collect sentences and corresponding labels, and assign them 
@@ -96,7 +100,7 @@ class Data(Dataset):
             elif len(pair) == 2:
                 label.append(self.refer_dict[pair[1]])
             else:
-                print("Error when spliting a line")
+                print("Error when spliting a line {}, which is {}".format(i, line))
                 raise ValueError
 
         self.sentences = sentences
@@ -109,14 +113,22 @@ class Data(Dataset):
     
     def __getitem__(self,idx):
         back_dict = {}
-        sentence = [self.vocab[word] for word in self.sentences[idx]]
-        label = [self.tag2idx[i] for i in self.labels[idx]]
+        sentence = self.sentences[idx]
         
-        sentence = sentence + [0] * (self.max_length - len(sentence))
-        # <START> and <END> are extra labels
+        if self.bert:
+            sentence = ''.join(sentence)
+            encoded_dict = self.tokenizer.encode_plus(sentence, add_special_tokens=True, truncation=True, max_length=self.max_length, pad_to_max_length=True, return_attention_mask=True, return_tensors='pt')
+            tokens = encoded_dict['input_ids']
+            back_dict['attn_mask'] = encoded_dict['attention_mask']
+
+        else:
+            tokens = [self.vocab[word] for word in sentence]
+            tokens = tokens + [0] * (self.max_length - len(tokens))
+
+        label = [self.tag2idx[i] for i in self.labels[idx]]
         label = label + [self.tag2idx['<PAD>']] * (self.max_length - len(label))
 
-        back_dict['sentence'] = np.asarray(sentence)
+        back_dict['token'] = np.asarray(tokens)
         back_dict['label'] = np.asarray(label)
 
         return back_dict
@@ -129,11 +141,12 @@ def my_collate(data):
     result = defaultdict(list)
     for d in data:
         for k,v in d.items():
-            if k not in excluded:
-                result[k].append(torch.LongTensor(v))
-            else:
-                result[k].append(v)
-
+            result[k].append(v)
+    for k,v in result.items():
+        if k not in excluded:
+            result[k] = torch.tensor(v)
+        else:
+            continue
     return dict(result)
 
 def prepare(hparams):
@@ -147,6 +160,24 @@ def prepare(hparams):
         loader_train: dataloader for training, without multi-process by default
     """
     dataset = Data(hparams)
-    # loader_train = DataLoader(dataset, batch_size=hparams['batch_size'], num_workers=0, drop_last=False, collate_fn=my_collate)
-    loader_train = DataLoader(dataset, batch_size=hparams['batch_size'], num_workers=0, drop_last=False, pin_memory=True)
+    loader_train = DataLoader(dataset, batch_size=hparams['batch_size'], num_workers=8, drop_last=False, pin_memory=True)
     return dataset.tag2idx, dataset.vocab, loader_train
+
+def predict(sentence, model, vocab):
+    """
+        convert the input sentence to its word ids, then feed it into the model
+    
+    Args: 
+        sentence: list of regular string
+        model: NER model
+    
+    Returns:
+        result: tagging sequence
+    """
+
+    sentence = [[vocab[i] for i in sent] for sent in sentence]
+    sentence = [sent + [0] * (model.seq_length - len(sent)) for sent in sentence]
+    sentence = torch.tensor(sentence, device=model.device, dtype=torch.long)
+    _, tag_seq = model(sentence)
+    tag_seq = [[model.idx2tag[j] for j in i] for i in tag_seq.tolist()]
+    return tag_seq
