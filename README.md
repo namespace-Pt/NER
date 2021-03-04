@@ -1,12 +1,12 @@
 # BiLSTM and CRF with Fine-Tuned BERT for Named Entity Recognition
 
 ## Instruction
-- To get familiar with **Conditional Random Field**, please read [THIS](CRF.pdf)
-- The simplified theory of the whole model is discussed [HERE](Explained.pdf).
+- To get familiar with **Conditional Random Field**, please read [THIS](docs/CRF.pdf)
+- The simplified theory of the whole model is discussed [HERE](docs/Explained.pdf).
 
 ### train and test
 - **First of all**, customize your data path in `hparams['path']` in `*.ipynb`
-- To inspect the regular model without Bert, run `common.ipynb`
+- To inspect the regular model without Bert, run `base.ipynb`
 - To inspect the Bert augmented model, run `bert.ipynb`
 
 ## Features
