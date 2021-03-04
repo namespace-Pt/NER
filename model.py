@@ -60,7 +60,7 @@ class BiLSTM_CRF(nn.Module):
         self.hidden = self.init_hidden()
         embedding = self.embedding(sentence).transpose(0,1)
         lstm_out, self.hidden = self.lstm(embedding, self.hidden)
-        lstm_out = lstm_out.view(self.seq_length, self.batch_size, self.hidden_dim).transpose(0,1)
+        lstm_out = lstm_out.transpose(0,1)
         lstm_feats = self.hidden2tag(lstm_out)
         return lstm_feats
 

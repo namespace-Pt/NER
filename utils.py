@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from collections import defaultdict
 from torch.utils.data import Dataset,DataLoader
 from transformers import BertTokenizer
 
@@ -106,7 +105,8 @@ class Data(Dataset):
         self.sentences = sentences
         self.labels = labels
         self.vocab = vocab
-        self.max_length = max_length
+        # [SEP] and [CLS]
+        self.max_length = max_length + 2
 
     def __len__(self):
         return len(self.sentences)
@@ -117,37 +117,22 @@ class Data(Dataset):
         
         if self.bert:
             sentence = ''.join(sentence)
-            encoded_dict = self.tokenizer.encode_plus(sentence, add_special_tokens=True, truncation=True, max_length=self.max_length, pad_to_max_length=True, return_attention_mask=True, return_tensors='pt')
-            tokens = encoded_dict['input_ids']
-            back_dict['attn_mask'] = encoded_dict['attention_mask']
+            encoded_dict = self.tokenizer.encode_plus(sentence, pad_to_max_length=True, truncation=True, max_length=self.max_length, return_tensors='pt')
+            tokens = encoded_dict['input_ids'].squeeze()
+            back_dict['attn_mask'] = encoded_dict['attention_mask'].squeeze()
 
         else:
             tokens = [self.vocab[word] for word in sentence]
             tokens = tokens + [0] * (self.max_length - len(tokens))
+            tokens = np.asarray(tokens)
 
         label = [self.tag2idx[i] for i in self.labels[idx]]
         label = label + [self.tag2idx['<PAD>']] * (self.max_length - len(label))
 
-        back_dict['token'] = np.asarray(tokens)
+        back_dict['token'] = tokens
         back_dict['label'] = np.asarray(label)
 
         return back_dict
-
-def my_collate(data):
-    """ 
-        costomized collate_fn, converting data to list rather than tensor
-    """
-    excluded = ['sentence']
-    result = defaultdict(list)
-    for d in data:
-        for k,v in d.items():
-            result[k].append(v)
-    for k,v in result.items():
-        if k not in excluded:
-            result[k] = torch.tensor(v)
-        else:
-            continue
-    return dict(result)
 
 def prepare(hparams):
     """ prepare dataset and dataloader for training

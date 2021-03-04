@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import BertForTokenClassification
+from transformers import AutoModel
 
 START_TAG = '<START>'
 STOP_TAG = '<END>'
@@ -28,8 +28,8 @@ class BiLSTM_CRF_BERT(nn.Module):
 
         self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, bidirectional=True)
 
-        self.bert = BertForTokenClassification.from_pretrained(
-            'bert-base-chinese',
+        self.bert = AutoModel.from_pretrained(
+            hparams['bert'],
             # output hidden embedding of each transformer layer
             output_hidden_states=True
         )
@@ -56,10 +56,12 @@ class BiLSTM_CRF_BERT(nn.Module):
                 torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device))
 
     def _lstm_encoder(self, sentence, attn_mask):
-        """ encode sentence with BiLSTM
+        """ encode sentence with BiLSTM and BERT, use the output of the second-to-last hidden layer
+            as the hidden states for each token
 
         Args:
             sentence: word index sequence of [batch_size, seq_length]
+            attn_mask: attention mask vector
 
         Returns:
             lstm_feats: sentence embedding of [batch_size, seq_length, tagset_size]
@@ -67,11 +69,10 @@ class BiLSTM_CRF_BERT(nn.Module):
         self.hidden = self.init_hidden()
 
         output = self.bert(sentence, attn_mask)
-        # not sure
         embedding = output['hidden_states'][-2].transpose(0,1)
 
         lstm_out, self.hidden = self.lstm(embedding, self.hidden)
-        lstm_out = lstm_out.view(self.seq_length, self.batch_size, self.hidden_dim).transpose(0,1)
+        lstm_out = lstm_out.transpose(0,1)
         lstm_feats = self.hidden2tag(lstm_out)
         return lstm_feats
 
@@ -189,3 +190,27 @@ class BiLSTM_CRF_BERT(nn.Module):
         lstm_feats = self._lstm_encoder(sentence, attn_mask)
         score, tag_seq = self._viterbi_decode(lstm_feats)
         return score, tag_seq
+
+class BERT_NER(nn.Module):
+    """
+        fine-tune pretrained BERT-NER model on our dataset
+    """
+
+    def __init__(self, hparams, tag2idx):
+        super().__init__()
+
+        self.batch_size = hparams['batch_size']
+        self.seq_length = hparams['seq_length']
+
+        self.device = hparams['device']
+
+        self.tag2idx = tag2idx
+        self.tagset_size = len(tag2idx)
+        self.idx2tag = {v:k for k,v in tag2idx.items()}
+
+        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, bidirectional=True)
+
+        self.bert = AutoModel.from_pretrained(
+            'ckiplab/albert-base-chinese-ner',
+            # output hidden embedding of each transformer layer
+        )
