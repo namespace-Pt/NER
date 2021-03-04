@@ -22,7 +22,6 @@ class BiLSTM_CRF(nn.Module):
 
         self.tag2idx = tag2idx
         self.tagset_size = len(tag2idx)
-        self.idx2tag = {v:k for k,v in tag2idx.items()}
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
         self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, bidirectional=True)
@@ -112,9 +111,9 @@ class BiLSTM_CRF(nn.Module):
 
         return score
 
-    def neg_log_likelihood(self, x):
-        sentence = x['token'].long().to(self.device)
-        tags = x['label'].long().to(self.device)
+    def fit(self, x):
+        sentence = x['token'].to(self.device)
+        tags = x['label'].to(self.device)
 
         if sentence.shape[0] != self.batch_size:
             self.batch_size = sentence.shape[0]
@@ -167,12 +166,13 @@ class BiLSTM_CRF(nn.Module):
         
         return path_score, best_path
     
-    def forward(self, sentence):
-        sentence = sentence.long().to(self.device)
+    def forward(self, x):
+
+        sentence = x['token'].to(self.device)
 
         if sentence.shape[0] != self.batch_size:
             self.batch_size = sentence.shape[0]
 
         lstm_feats = self._lstm_encoder(sentence)
         score, tag_seq = self._viterbi_decode(lstm_feats)
-        return score, tag_seq
+        return tag_seq

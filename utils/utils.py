@@ -1,7 +1,11 @@
 import torch
 import numpy as np
-from torch.utils.data import Dataset,DataLoader
-from transformers import BertTokenizer
+import torch.optim as optim
+from tqdm import tqdm
+from collections import defaultdict
+from transformers import AutoTokenizer,get_linear_schedule_with_warmup
+from torch.utils.data import Dataset,DataLoader,random_split
+from sklearn.metrics import classification_report
 
 class Data(Dataset):
     """
@@ -49,7 +53,7 @@ class Data(Dataset):
         self.bert = False
         if 'bert' in hparams:
             self.bert = True
-            self.tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
+            self.tokenizer = AutoTokenizer.from_pretrained(hparams['bert'])
 
     def _parse_file(self):
         """ parse the labeled training file to collect sentences and corresponding labels, and assign them 
@@ -134,6 +138,22 @@ class Data(Dataset):
 
         return back_dict
 
+def my_collate(data):
+    """ 
+        costomized collate_fn, converting data to list rather than tensor
+    """
+    excluded = ['sentence']
+    result = defaultdict(list)
+    for d in data:
+        for k,v in d.items():
+            result[k].append(v)
+    for k,v in result.items():
+        if k not in excluded:
+            result[k] = torch.tensor(v)
+        else:
+            continue
+    return dict(result)
+
 def prepare(hparams):
     """ prepare dataset and dataloader for training
 
@@ -145,8 +165,79 @@ def prepare(hparams):
         loader_train: dataloader for training, without multi-process by default
     """
     dataset = Data(hparams)
-    loader_train = DataLoader(dataset, batch_size=hparams['batch_size'], num_workers=8, drop_last=False, pin_memory=True)
-    return dataset.tag2idx, dataset.vocab, loader_train
+
+    train_size = int(0.9 * len(dataset))
+    val_size = len(dataset) - train_size
+
+    dataset_train, dataset_val = random_split(dataset,[train_size, val_size])
+    
+    loader_train = DataLoader(dataset_train, batch_size=hparams['batch_size'], num_workers=8, drop_last=False, pin_memory=True, shuffle=True)
+    loader_val = DataLoader(dataset_val, batch_size=hparams['batch_size'], num_workers=8, drop_last=False, pin_memory=True)
+
+    attr_dict = {
+        'tag2idx': dataset.tag2idx, 
+        'vocab': dataset.vocab,
+        'max_length': dataset.max_length
+    }
+    return attr_dict, [loader_train,loader_val]
+
+def evaluate(model, loader):
+    """ evaluate the model by accuracy, recall and f1-score
+
+    Args:
+        model
+        loader: DataLoader
+    
+    Returns:
+        report: accuracy, recall, f1-score printed
+    """
+    with torch.no_grad():
+        preds = []
+        labels = []
+        for i,x in enumerate(loader):      
+            preds.extend(model(x).flatten().tolist())
+            labels.extend(x['label'].flatten().tolist())
+        
+    print(classification_report(labels, preds))
+
+def train(hparams, model, loaders, schedule=False):
+    """ train the model
+
+    Args:
+        model
+        loader: DataLoader
+    """
+
+    optimizer = optim.AdamW(model.parameters(),lr=0.001)
+
+    if schedule:
+        total_steps = len(loaders[0]) * hparams['epochs']
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps = 0, num_training_steps = total_steps)
+
+    for epoch in range(hparams['epochs']):
+        tqdm_ = tqdm(enumerate(loaders[0]))
+        total_loss = 0
+
+        for step,x in tqdm_:
+            model.zero_grad()
+            loss = model.fit(x)
+            loss.backward()
+
+            # prevent gradient explosion
+            # torch.nn.utils.clip_grad_norm_(bert_model.parameters(), 1.0)
+
+            optimizer.step()
+
+            if schedule:
+                scheduler.step()
+
+            total_loss += loss.item()
+            tqdm_.set_description("epoch {:d} , step {:d} , loss: {:.4f}".format(epoch+1, step, total_loss/(step+1)))
+        
+        # print the performance on validation set every epoch
+        evaluate(model, loaders[1])
+    
+    return model
 
 def predict(sentence, model, vocab):
     """
@@ -159,10 +250,11 @@ def predict(sentence, model, vocab):
     Returns:
         result: tagging sequence
     """
+    idx2tag = {v:k for k,v in model.tag2idx.items()}
 
     sentence = [[vocab[i] for i in sent] for sent in sentence]
     sentence = [sent + [0] * (model.seq_length - len(sent)) for sent in sentence]
     sentence = torch.tensor(sentence, device=model.device, dtype=torch.long)
     _, tag_seq = model(sentence)
-    tag_seq = [[model.idx2tag[j] for j in i] for i in tag_seq.tolist()]
+    tag_seq = [[idx2tag[j] for j in i] for i in tag_seq.tolist()]
     return tag_seq

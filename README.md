@@ -10,7 +10,7 @@
 - To inspect the Bert augmented model, run `bert.ipynb`
 
 ## Features
-- [x] **batched** version of official NER provided by `PyTorch` in [HERE](https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html)
+- [x] **batched** version of official NER provided by `PyTorch` [HERE](https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html)
 - [x] standard training workflow in `PyTorch`
   1. dataset
   2. dataloader
@@ -20,3 +20,4 @@
 - [x] Bert augmented
 
 ## Performance
+suffers, maybe due to my own dataset
