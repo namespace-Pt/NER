@@ -102,10 +102,10 @@ class BiLSTM_CRF(nn.Module):
         """
         score = torch.zeros((self.batch_size,1), device=self.device)
         tags = torch.cat([torch.full((self.batch_size, 1), self.tag2idx[START_TAG], dtype=torch.long, device=self.device), tags],dim=1)
-        for i in range(feats.shape[0]):
+        for i in range(feats.shape[1]):
             feat = feats[:,i,:]
 
-            score = score + self.transitions[tags[:,i+1], tags[:,i]].view(self.batch_size,1) + feat.gather(dim=-1, index=tags[:,i].unsqueeze(dim=-1))
+            score = score + self.transitions[tags[:,i+1], tags[:,i]].view(self.batch_size,1) + feat.gather(dim=-1, index=tags[:,i+1].unsqueeze(dim=-1))
         
         score = score + self.transitions[self.tag2idx[STOP_TAG], tags[:,-1]].unsqueeze(dim=-1)
 

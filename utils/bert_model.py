@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModel,BertForTokenClassification
+from transformers import AutoModel,BertForTokenClassification,AutoModelForTokenClassification
 
 START_TAG = '<START>'
 STOP_TAG = '<END>'
@@ -16,7 +16,6 @@ class BERT_CRF(nn.Module):
 
         self.batch_size = hparams['batch_size']
         self.embedding_dim = hparams['embedding_dim']
-        self.hidden_dim = hparams['hidden_dim']
         self.seq_length = hparams['seq_length']
 
         self.device = hparams['device']
@@ -30,7 +29,7 @@ class BERT_CRF(nn.Module):
             output_hidden_states=True
         )
 
-        self.hidden2tag = nn.Linear(self.hidden_dim, self.tagset_size)
+        self.hidden2tag = nn.Linear(self.embedding_dim, self.tagset_size)
 
         # Matrix of transition parameters.  Entry i,j is the score of
         # transitioning *to* i *from* j.
@@ -44,12 +43,6 @@ class BERT_CRF(nn.Module):
         self.transitions.data[:, tag2idx[PAD_TAG]] = 0
         self.transitions.data[tag2idx[PAD_TAG], :] = 0
 
-        self.hidden = self.init_hidden()
-
-    def init_hidden(self):
-        return (torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device),
-                torch.randn(2, self.batch_size, self.hidden_dim // 2, device=self.device))
-
     def _bert_encoder(self, sentence, attn_mask):
         """ encode sentence with BERT, use the output of the second-to-last hidden layer
             as the hidden states for each token
@@ -61,8 +54,6 @@ class BERT_CRF(nn.Module):
         Returns:
             feats: sentence embedding of [batch_size, seq_length, tagset_size]
         """
-        self.hidden = self.init_hidden()
-
         output = self.bert(sentence, attn_mask)
         embedding = output['hidden_states'][-2]
 
@@ -108,10 +99,10 @@ class BERT_CRF(nn.Module):
         """
         score = torch.zeros((self.batch_size,1), device=self.device)
         tags = torch.cat([torch.full((self.batch_size, 1, 1), self.tag2idx[START_TAG], dtype=torch.long, device=self.device), tags],dim=1)
-        for i in range(feats.shape[0]):
+        for i in range(feats.shape[1]):
             feat = feats[:,i,:]
 
-            score = score + self.transitions[tags[:,i+1], tags[:,i]] + feat.gather(dim=-1, index=tags[:,i])
+            score = score + self.transitions[tags[:,i+1], tags[:,i]] + feat.gather(dim=-1, index=tags[:,i+1])
         
         score = score + self.transitions[self.tag2idx[STOP_TAG], tags[:,-1]]
 
@@ -184,79 +175,6 @@ class BERT_CRF(nn.Module):
         score, tag_seq = self._viterbi_decode(feats)
         return tag_seq
 
-class BERT_NER(nn.Module):
-    """
-        fine-tune pretrained BERT-NER model on our dataset
-    """
-
-    def __init__(self, hparams, tag2idx):
-        super().__init__()
-
-        self.embedding_dim = hparams['embedding_dim']
-        self.batch_size = hparams['batch_size']
-        self.seq_length = hparams['seq_length']
-
-        self.device = hparams['device']
-
-        self.tag2idx = tag2idx
-        self.tagset_size = len(tag2idx)
-
-        self.bert = AutoModel.from_pretrained(
-            hparams['bert']
-        )
-
-        self.hidden2tag = nn.Linear(self.embedding_dim, self.tagset_size)
-        self.Softmax = nn.Softmax(dim=-1)
-    
-    def _bert_encoder(self, tokens, attn_masks):
-        """ encode the input token with BERT model
-
-        Args:
-            tokens: input_ids output by BertTokenizer.encode, of size [batch_size, seq_length]
-            attn_masks: attention_mask output by BertTokenizer.encode, of size [batch_size, seq_length]
-        
-        Returns:
-            tag_prob: normalized probabilities of each token being recognized as every labels, of size [batch_size, seq_length, tagset_size]
-        """
-        output = self.bert(tokens, attn_masks)
-        embedding = output['last_hidden_state']
-        tag_prob = self.Softmax(self.hidden2tag(embedding))
-        return tag_prob
-    
-    def fit(self,x):
-        """ train parameters to minimize negative log likelihood
-
-        Args:
-            tokens: input_ids output by BertTokenizer.encode, of size [batch_size, seq_length]
-            attn_masks: attention_mask output by BertTokenizer.encode, of size [batch_size, seq_length]
-            tags: ground truth label of the batch input, of size [batch_size, seq_length, 1]
-        
-        Returns:
-            loss: average of negative log likelihood of each sentence in the batch
-        """
-        tokens = x['token'].to(self.device)
-        attn_masks = x['attn_mask'].to(self.device)
-        tags = x['label'].to(self.device).unsqueeze(dim=-1)
-
-        tag_prob = self._bert_encoder(tokens, attn_masks)
-
-        tag_prob_log = tag_prob.gather(-1,tags).squeeze(dim=-1)
-        loss = -torch.mean(torch.sum(torch.log(tag_prob_log),dim=-1),dim=0)
-        return loss
-    
-    def forward(self,x):
-        """ 
-        forward pass to get the label sequence with maximum probability
-        """
-        tokens = x['token'].to(self.device)
-        attn_masks = x['attn_mask'].to(self.device)
-        if tokens.shape[0] != self.batch_size:
-            self.batch_size = tokens.shape[0]
-        
-        tag_prob = self._bert_encoder(tokens, attn_masks)
-        tag_seq = torch.argmax(tag_prob, dim=-1)
-        return tag_seq
-
 class BERT_BASE(nn.Module):
     """
         fine-tune pretrained BERT model on our dataset
@@ -274,7 +192,7 @@ class BERT_BASE(nn.Module):
         self.tag2idx = tag2idx
         self.tagset_size = len(tag2idx)
 
-        self.bert = BertForTokenClassification.from_pretrained(
+        self.bert = AutoModelForTokenClassification.from_pretrained(
             hparams['bert'],
             num_labels=len(tag2idx)
         )
@@ -314,5 +232,79 @@ class BERT_BASE(nn.Module):
 
         output = self.bert(tokens, attention_mask=attn_masks)
         tag_prob = self.Softmax(output['logits'])
+        tag_seq = torch.argmax(tag_prob, dim=-1)
+        return tag_seq
+
+class BERT_NER(nn.Module):
+    """
+        fine-tune pretrained BERT-NER model on our dataset
+    """
+
+    def __init__(self, hparams, tag2idx):
+        super().__init__()
+
+        self.embedding_dim = hparams['embedding_dim']
+        self.batch_size = hparams['batch_size']
+        self.seq_length = hparams['seq_length']
+
+        self.device = hparams['device']
+
+        self.tag2idx = tag2idx
+        self.tagset_size = len(tag2idx)
+
+        self.bert = AutoModelForTokenClassification.from_pretrained(
+            hparams['bert'],
+            output_hidden_states=True
+        )
+
+        self.hidden2tag = nn.Linear(self.embedding_dim, self.tagset_size)
+        self.Softmax = nn.Softmax(dim=-1)
+    
+    def _bert_encoder(self, tokens, attn_masks):
+        """ encode the input token with BERT model
+
+        Args:
+            tokens: input_ids output by BertTokenizer.encode, of size [batch_size, seq_length]
+            attn_masks: attention_mask output by BertTokenizer.encode, of size [batch_size, seq_length]
+        
+        Returns:
+            tag_prob: normalized probabilities of each token being recognized as every labels, of size [batch_size, seq_length, tagset_size]
+        """
+        output = self.bert(tokens, attn_masks)
+        embedding = output['hidden_states'][-2]
+        tag_prob = self.Softmax(self.hidden2tag(embedding))
+        return tag_prob
+    
+    def fit(self,x):
+        """ train parameters to minimize negative log likelihood
+
+        Args:
+            tokens: input_ids output by BertTokenizer.encode, of size [batch_size, seq_length]
+            attn_masks: attention_mask output by BertTokenizer.encode, of size [batch_size, seq_length]
+            tags: ground truth label of the batch input, of size [batch_size, seq_length, 1]
+        
+        Returns:
+            loss: average of negative log likelihood of each sentence in the batch
+        """
+        tokens = x['token'].to(self.device)
+        attn_masks = x['attn_mask'].to(self.device)
+        tags = x['label'].to(self.device).unsqueeze(dim=-1)
+
+        tag_prob = self._bert_encoder(tokens, attn_masks)
+
+        tag_prob_log = tag_prob.gather(-1,tags).squeeze(dim=-1)
+        loss = -torch.mean(torch.sum(torch.log(tag_prob_log),dim=-1),dim=0)
+        return loss
+    
+    def forward(self,x):
+        """ 
+        forward pass to get the label sequence with maximum probability
+        """
+        tokens = x['token'].to(self.device)
+        attn_masks = x['attn_mask'].to(self.device)
+        if tokens.shape[0] != self.batch_size:
+            self.batch_size = tokens.shape[0]
+        
+        tag_prob = self._bert_encoder(tokens, attn_masks)
         tag_seq = torch.argmax(tag_prob, dim=-1)
         return tag_seq
