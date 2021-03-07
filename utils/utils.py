@@ -36,9 +36,9 @@ class Data(Dataset):
         ]
         
         tag2idx = dict()
-        tag2idx['<START>'] = len(tag2idx)
-        tag2idx['<END>'] = len(tag2idx)
-        tag2idx['<PAD>'] = len(tag2idx)
+        tag2idx['[START]'] = len(tag2idx)
+        tag2idx['[END]'] = len(tag2idx)
+        tag2idx['[PAD]'] = len(tag2idx)
 
         for item in self.entity_list:
             tag2idx[item] = len(tag2idx)
@@ -46,14 +46,14 @@ class Data(Dataset):
         self.tag2idx = tag2idx
         self.path = hparams['path']
 
-        self._parse_file()
-
         self.bert = False
         if 'bert' in hparams:
             self.bert = True
             self.tokenizer = AutoTokenizer.from_pretrained(hparams['bert'])
         
         self.max_length = hparams['seq_length']
+
+        self._parse_file()
 
     def _parse_file(self):
         """ parse the labeled training file to collect sentences and corresponding labels, and assign them 
@@ -69,18 +69,16 @@ class Data(Dataset):
         sentence = []
         label = []
 
-        vocab = {'<PAD>':0}
+        vocab = {'[PAD]':0}
         # max_length = 0
 
         for i,line in enumerate(f):
             if line == '\n':
                 # append the period at the end of the sentence for better learning the partition
-                # sentence.append('。')
+                # sentence.append('[SEP]')
                 
                 # append the extra labels
                 # label.append('O')
-                # label.insert(0,'<START>')
-                # label.append('<END>')
 
                 sentences.append(sentence)
                 labels.append(label)
@@ -112,8 +110,8 @@ class Data(Dataset):
             
             # append the extra labels
             # label.append('O')
-            # label.insert(0,'<START>')
-            # label.append('<END>')
+            # label.insert(0,'[START]')
+            # label.append('[END]')
 
             sentences.append(sentence)
             labels.append(label)
@@ -130,6 +128,11 @@ class Data(Dataset):
         # [SEP] and [CLS]
         # self.max_length = max_length + 2
 
+        if self.bert:
+            for label in self.labels:
+                label.insert(0,'O')
+                label.append('O')
+            
     def __len__(self):
         return len(self.sentences)
     
@@ -150,7 +153,7 @@ class Data(Dataset):
             tokens = np.asarray(tokens)
 
         label = [self.tag2idx[i] for i in self.labels[idx]]
-        label = label[:self.max_length] + [self.tag2idx['<PAD>']] * (self.max_length - len(label))
+        label = label[:self.max_length] + [self.tag2idx['[PAD]']] * (self.max_length - len(label))
         
         back_dict['sentence'] = sentence_
         back_dict['token'] = tokens
@@ -174,11 +177,12 @@ def my_collate(data):
             continue
     return dict(result)
 
-def prepare(hparams):
+def prepare(hparams, split=0.9):
     """ prepare dataset and dataloader for training
 
     Args:
         hparams: dict of hyper parameters
+        split: the portion of training set
     
     Returns:
         tag2idx: the map from the name of the tag to the index of it
@@ -186,7 +190,7 @@ def prepare(hparams):
     """
     dataset = Data(hparams)
 
-    train_size = int(0.9 * len(dataset))
+    train_size = int(split * len(dataset))
     val_size = len(dataset) - train_size
 
     dataset_train, dataset_val = random_split(dataset,[train_size, val_size])
@@ -226,7 +230,7 @@ def evaluate(model, loader,  prt=True):
     }
 
 
-def train(hparams, model, loaders, schedule=False):
+def train(hparams, model, loaders, lr=1e-3,schedule=False):
     """ train the model
 
     Args:
@@ -234,7 +238,7 @@ def train(hparams, model, loaders, schedule=False):
         loader: DataLoader
     """
 
-    optimizer = optim.AdamW(model.parameters(),lr=0.001)
+    optimizer = optim.AdamW(model.parameters(),lr=lr)
 
     if schedule:
         total_steps = len(loaders[0]) * hparams['epochs']
@@ -265,22 +269,34 @@ def train(hparams, model, loaders, schedule=False):
     
     return model
 
-def predict(sentence, model, vocab):
+def predict(sentence, model, tokenizer, hparams=None):
     """
         convert the input sentence to its word ids, then feed it into the model
     
     Args: 
         sentence: list of regular string
         model: NER model
+        tokenizer: vocab or bert-tokenizer
+        hparams
     
     Returns:
         result: tagging sequence
     """
     idx2tag = {v:k for k,v in model.tag2idx.items()}
 
-    sentence = [[vocab[i] for i in sent] for sent in sentence]
-    sentence = [sent + [0] * (model.seq_length - len(sent)) for sent in sentence]
-    sentence = torch.tensor(sentence, device=model.device, dtype=torch.long)
-    tag_seq = model({'token': sentence})
-    tag_seq = [[idx2tag[j] for j in i] for i in tag_seq.tolist()]
+    if hasattr(model, 'bert'):
+        sentence = [tokenizer.encode_plus(sent, pad_to_max_length=True, truncation=True, max_length=hparams['seq_length'], return_tensors='pt') for sent in sentence]
+
+        token = torch.cat([sent['input_ids'] for sent in sentence], dim=0)
+        attn_masks = torch.cat([sent['attention_mask'] for sent in sentence], dim=0)
+
+        tag_seq = model({'token':token, 'attn_mask':attn_masks})
+        tag_seq = [[idx2tag[j] for j in i] for i in tag_seq.tolist()]
+    
+    else:
+        sentence = [[tokenizer[i] for i in sent] for sent in sentence]
+        sentence = [sent + [0] * (model.seq_length - len(sent)) for sent in sentence]
+        sentence = torch.tensor(sentence, device=model.device, dtype=torch.long)
+        tag_seq = model({'token': sentence})
+        tag_seq = [[idx2tag[j] for j in i] for i in tag_seq.tolist()]
     return tag_seq

@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-START_TAG = '<START>'
-STOP_TAG = '<END>'
-PAD_TAG = '<PAD>'
+START_TAG = '[START]'
+STOP_TAG = '[END]'
+PAD_TAG = '[PAD]'
 
 class BiLSTM_CRF(nn.Module):
     '''

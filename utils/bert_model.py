@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel,BertForTokenClassification,AutoModelForTokenClassification
 
-START_TAG = '<START>'
-STOP_TAG = '<END>'
-PAD_TAG = '<PAD>'
+START_TAG = '[START]'
+STOP_TAG = '[END]'
+PAD_TAG = '[PAD]'
 
 class BERT_CRF(nn.Module):
     '''
@@ -55,7 +55,7 @@ class BERT_CRF(nn.Module):
             feats: sentence embedding of [batch_size, seq_length, tagset_size]
         """
         output = self.bert(sentence, attn_mask)
-        embedding = output['hidden_states'][-2]
+        embedding = output['hidden_states'][-1]
 
         feats = self.hidden2tag(embedding)
         return feats
@@ -101,7 +101,7 @@ class BERT_CRF(nn.Module):
         tags = torch.cat([torch.full((self.batch_size, 1, 1), self.tag2idx[START_TAG], dtype=torch.long, device=self.device), tags],dim=1)
         for i in range(feats.shape[1]):
             feat = feats[:,i,:]
-
+            
             score = score + self.transitions[tags[:,i+1], tags[:,i]] + feat.gather(dim=-1, index=tags[:,i+1])
         
         score = score + self.transitions[self.tag2idx[STOP_TAG], tags[:,-1]]
