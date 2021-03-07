@@ -54,4 +54,4 @@ where one word together with its label (separated with `\t`) occupies one line, 
 |model|Accuracy|f1-macro|f1-weighted|
 |:-:|:-:|:-:|:-:|
 |base|0.95|0.7378|0.9517|
-|bert|**suffers**|
+|bert|0.91|0.5615|0.9047|
