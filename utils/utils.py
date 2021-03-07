@@ -197,11 +197,17 @@ def prepare(hparams, split=0.9):
     
     loader_train = DataLoader(dataset_train, batch_size=hparams['batch_size'], num_workers=8, drop_last=False, pin_memory=True, shuffle=True)
     loader_val = DataLoader(dataset_val, batch_size=hparams['batch_size'], num_workers=8, drop_last=False, pin_memory=True)
+    if dataset.bert:
+        attr_dict = {
+            'tag2idx': dataset.tag2idx,
+            'tokenizer': dataset.tokenizer
+        }
+    else:
+        attr_dict = {
+            'tag2idx': dataset.tag2idx,
+            'tokenizer': dataset.vocab
+        }
 
-    attr_dict = {
-        'tag2idx': dataset.tag2idx,
-        'vocab': dataset.vocab
-    }
     return attr_dict, [loader_train,loader_val]
 
 def evaluate(model, loader,  prt=True):
