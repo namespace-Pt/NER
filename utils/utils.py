@@ -14,25 +14,25 @@ class Data(Dataset):
     def __init__(self,hparams):
         # self.seq_length = hparams['seq_length']
         self.entity_list = [
-            'B-award',
-            'I-award',
-            'B-conference',
-            'I-conference',
-            'B-department',
-            'I-department',
-            'B-location',
-            'I-location',
-            'B-major',
-            'I-major',
-            'B-name',
-            'I-name',
-            'B-organization',
-            'I-organization',
-            'B-position',
-            'I-position',
-            'B-scholarship',
-            'I-scholarship',
-            'O'
+    'B-award',
+    'I-award',
+    'B-conference',
+    'I-conference',
+    'B-department',
+    'I-department',
+    'B-location',
+    'I-location',
+    'B-major',
+    'I-major',
+    'B-name',
+    'I-name',
+    'B-organization',
+    'I-organization',
+    'B-position',
+    'I-position',
+    'B-scholarship',
+    'I-scholarship',
+    'O'
         ]
         
         tag2idx = dict()
@@ -275,7 +275,7 @@ def train(hparams, model, loaders, lr=1e-3,schedule=False):
     
     return model
 
-def predict(sentence, model, tokenizer, hparams=None):
+def predict(sentence, model, tokenizer, max_length=None):
     """
         convert the input sentence to its word ids, then feed it into the model
     
@@ -283,26 +283,36 @@ def predict(sentence, model, tokenizer, hparams=None):
         sentence: list of regular string
         model: NER model
         tokenizer: vocab or bert-tokenizer
-        hparams
+        max_length: all sentence will be padded/truncated to max_length
     
     Returns:
         result: tagging sequence
     """
     idx2tag = {v:k for k,v in model.tag2idx.items()}
+    if not max_length:
+        max_length = model.seq_length
 
     if hasattr(model, 'bert'):
-        sentence = [tokenizer.encode_plus(sent, pad_to_max_length=True, truncation=True, max_length=hparams['seq_length'], return_tensors='pt') for sent in sentence]
+        sentence = [tokenizer.encode_plus(sent, pad_to_max_length=True, truncation=True, max_length=max_length, return_tensors='pt') for sent in sentence]
 
         token = torch.cat([sent['input_ids'] for sent in sentence], dim=0)
         attn_masks = torch.cat([sent['attention_mask'] for sent in sentence], dim=0)
 
-        tag_seq = model({'token':token, 'attn_mask':attn_masks})
-        tag_seq = [[idx2tag[j] for j in i] for i in tag_seq.tolist()]
-    
+        tag_seq = model({'token':token, 'attn_mask':attn_masks}).tolist()
+        tag_seq = [[idx2tag[j] for j in i] for i in tag_seq]
+
+        original = [tokenizer.convert_ids_to_tokens(toke) for toke in token]
+
     else:
+        original = [[word for word in sent] for sent in sentence]
+
         sentence = [[tokenizer[i] for i in sent] for sent in sentence]
-        sentence = [sent + [0] * (model.seq_length - len(sent)) for sent in sentence]
+        sentence = [sent + [0] * (max_length - len(sent)) for sent in sentence]
         sentence = torch.tensor(sentence, device=model.device, dtype=torch.long)
         tag_seq = model({'token': sentence})
         tag_seq = [[idx2tag[j] for j in i] for i in tag_seq.tolist()]
-    return tag_seq
+    
+    for sent,tags in zip(original, tag_seq):
+        print('************************')
+        for word,tag in zip(sent,tags):
+            print(word, tag)
