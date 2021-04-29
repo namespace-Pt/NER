@@ -255,7 +255,6 @@ def train(hparams, model, loaders, lr=1e-3,schedule=False):
         total_loss = 0
 
         for step,x in tqdm_:
-            model.zero_grad()
             loss = model.fit(x)
             loss.backward()
 
@@ -263,7 +262,8 @@ def train(hparams, model, loaders, lr=1e-3,schedule=False):
             # torch.nn.utils.clip_grad_norm_(bert_model.parameters(), 1.0)
 
             optimizer.step()
-
+            optimizer.zero_grad()
+            
             if schedule:
                 scheduler.step()
 
